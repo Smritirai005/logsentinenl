@@ -1,0 +1,59 @@
+name: Train Model (Weekly)
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'   # Every Sunday at 2am UTC
+  workflow_dispatch:        # Manual trigger
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: log-anomaly-detection-artifacts
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download and preprocess data
+        run: python src/data_preprocessing.py
+
+      - name: Train model
+        run: python src/model_training.py
+
+      - name: Upload model artifacts to S3
+        run: |
+          aws s3 cp models/ s3://${{ env.S3_BUCKET }}/models/ --recursive
+          echo "Model artifacts uploaded to S3"
+
+      - name: Check for data drift
+        run: python src/drift_detection.py
+        continue-on-error: true
+
+      - name: Upload training results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: training-results
+          path: |
+            models/
+            data/processed/
+          retention-days: 30

@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudWatch Alarms for Log Anomaly Detection'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: log-anomaly-detection
+  SNSTopicArn:
+    Type: String
+    Description: SNS topic ARN for alarm notifications
+
+Resources:
+  # High anomaly detection rate alarm
+  HighAnomalyRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-high-anomaly-rate'
+      AlarmDescription: More than 10 anomalies detected in a 5-minute window
+      MetricName: AnomalyDetected
+      Namespace: LogAnomalyDetection
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SNSTopicArn
+      OKActions:
+        - !Ref SNSTopicArn
+
+  # Data drift alarm
+  DataDriftAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-data-drift'
+      AlarmDescription: KL divergence exceeds drift threshold
+      MetricName: KLDivergence
+      Namespace: LogAnomalyDetection
+      Statistic: Average
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0.15
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SNSTopicArn
+
+  # Lambda error rate alarm - log processor
+  LogProcessorErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-log-processor-errors'
+      AlarmDescription: Log processor Lambda has elevated error rate
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub '${ProjectName}-log-processor'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SNSTopicArn
+
+  # Lambda error rate alarm - anomaly detector
+  AnomalyDetectorErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-anomaly-detector-errors'
+      AlarmDescription: Anomaly detector Lambda has elevated error rate
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub '${ProjectName}-anomaly-detector'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SNSTopicArn
+
+  # SageMaker endpoint invocation errors
+  SageMakerEndpointErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-sagemaker-errors'
+      AlarmDescription: SageMaker endpoint model errors
+      MetricName: ModelError
+      Namespace: AWS/SageMaker
+      Dimensions:
+        - Name: EndpointName
+          Value: log-anomaly-endpoint
+        - Name: VariantName
+          Value: AllTraffic
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SNSTopicArn
+
+  # Kinesis iterator age alarm (stream falling behind)
+  KinesisIteratorAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-kinesis-lag'
+      AlarmDescription: Kinesis stream processing is falling behind
+      MetricName: GetRecords.IteratorAgeMilliseconds
+      Namespace: AWS/Kinesis
+      Dimensions:
+        - Name: StreamName
+          Value: !Sub '${ProjectName}-stream'
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 60000  # 60 seconds
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SNSTopicArn
+
+  # High reconstruction error dashboard metric alarm
+  HighReconstructionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-high-reconstruction-error'
+      AlarmDescription: Average reconstruction error is rising (potential model degradation)
+      MetricName: ReconstructionError
+      Namespace: LogAnomalyDetection
+      Statistic: Average
+      Period: 3600
+      EvaluationPeriods: 3
+      Threshold: 0.08
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SNSTopicArn

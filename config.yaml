@@ -1,0 +1,43 @@
+# config.yaml
+project:
+  name: log-anomaly-detection
+  version: 1.0.0
+
+data:
+  url: "https://raw.githubusercontent.com/logpai/loghub/master/HDFS/HDFS_2k.log"
+  raw_path: "data/raw/HDFS_2k.log"
+  processed_path: "data/processed/"
+  sequence_length: 10
+  train_split: 0.7
+
+model:
+  name: lstm-autoencoder
+  lstm_units: 64
+  embedding_dim: 32
+  epochs: 50
+  batch_size: 32
+  learning_rate: 0.001
+  threshold_percentile: 95
+
+aws:
+  region: us-east-1
+  account_id: "739086995625"
+  s3_bucket: "log-anomaly-detection-artifacts-739086995625"
+
+  sagemaker:
+    role_arn: "arn:aws:iam::739086995625:role/log-anomaly-detection-sagemaker-role"
+    instance_type:  ml.t2.medium 
+    endpoint_name: log-anomaly-endpoint-v10
+
+  kinesis:
+    stream_name: log-stream
+
+  cloudwatch:
+    log_group: /aws/lambda/log-processor
+
+  sns:
+    topic_arn: "arn:aws:sns:us-east-1:739086995625:log-anomaly-alerts"
+
+monitoring:
+  drift_check_interval: 3600  # 1 hour
+  alert_threshold: 0.15

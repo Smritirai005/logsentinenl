@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Log Anomaly Detection MLOps Infrastructure'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: log-anomaly-detection
+    Description: Project name for resource naming
+
+  AlertEmail:
+    Type: String
+    Description: Email address for anomaly alerts
+    Default: your-email@example.com
+
+Resources:
+  # ==================== S3 BUCKET ====================
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-artifacts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ==================== SQS QUEUE (replaces Kinesis) ====================
+  LogQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-queue'
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 86400  # 24 hours
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt LogDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  LogDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # ==================== SNS TOPIC ====================
+  AnomalyAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-alerts'
+      DisplayName: Log Anomaly Alerts
+      Subscription:
+        - Endpoint: !Ref AlertEmail
+          Protocol: email
+
+  # ==================== IAM ROLES ====================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpoint
+                  - cloudwatch:PutMetricData
+                  - sns:Publish
+                  - s3:GetObject
+                  - s3:PutObject
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:SendMessage
+                  - lambda:InvokeFunction
+                Resource: '*'
+
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-sagemaker-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      Policies:
+        - PolicyName: SageMakerS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub '${ArtifactsBucket.Arn}/*'
+                  - !GetAtt ArtifactsBucket.Arn
+
+  # ==================== LAMBDA FUNCTIONS ====================
+  LogProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-log-processor'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Placeholder'}
+      Environment:
+        Variables:
+          SEQUENCE_LENGTH: '10'
+          OUTPUT_QUEUE_URL: !Ref LogQueue
+
+  AnomalyDetectorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-anomaly-detector'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 1024
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Placeholder'}
+      Environment:
+        Variables:
+          ENDPOINT_NAME: 'log-anomaly-endpoint'
+          SNS_TOPIC_ARN: !Ref AnomalyAlertTopic
+          ANOMALY_THRESHOLD: '0.05'
+
+  # ==================== SQS -> LAMBDA TRIGGER ====================
+  SQSEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt LogQueue.Arn
+      FunctionName: !GetAtt LogProcessorFunction.Arn
+      BatchSize: 10
+      Enabled: true
+
+  # ==================== CLOUDWATCH LOG GROUPS ====================
+  LogProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LogProcessorFunction}'
+      RetentionInDays: 7
+
+  AnomalyDetectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AnomalyDetectorFunction}'
+      RetentionInDays: 7
+
+  # ==================== CLOUDWATCH ALARMS ====================
+  HighAnomalyRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-high-anomaly-rate'
+      AlarmDescription: Alert when anomaly rate is too high
+      MetricName: AnomalyDetected
+      Namespace: LogAnomalyDetection
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AnomalyAlertTopic
+
+  DriftDetectedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-drift-detected'
+      AlarmDescription: Alert when data drift is detected
+      MetricName: KLDivergence
+      Namespace: LogAnomalyDetection
+      Statistic: Average
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0.15
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AnomalyAlertTopic
+
+Outputs:
+  S3BucketName:
+    Description: S3 bucket for artifacts
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub '${ProjectName}-bucket'
+
+  SQSQueueUrl:
+    Description: SQS queue URL (replaces Kinesis stream)
+    Value: !Ref LogQueue
+    Export:
+      Name: !Sub '${ProjectName}-queue-url'
+
+  SQSQueueArn:
+    Description: SQS queue ARN
+    Value: !GetAtt LogQueue.Arn
+    Export:
+      Name: !Sub '${ProjectName}-queue-arn'
+
+  SNSTopicArn:
+    Description: SNS topic for alerts
+    Value: !Ref AnomalyAlertTopic
+    Export:
+      Name: !Sub '${ProjectName}-sns-topic'
+
+  SageMakerRoleArn:
+    Description: SageMaker execution role ARN
+    Value: !GetAtt SageMakerExecutionRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-sagemaker-role'
+
+  LogProcessorFunctionArn:
+    Description: Log processor Lambda ARN
+    Value: !GetAtt LogProcessorFunction.Arn
+
+  AnomalyDetectorFunctionArn:
+    Description: Anomaly detector Lambda ARN
+    Value: !GetAtt AnomalyDetectorFunction.Arn

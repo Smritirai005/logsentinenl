@@ -1,0 +1,131 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'lambda_functions/**'
+      - 'aws_infrastructure/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: log-anomaly-detection
+
+jobs:
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    name: Deploy CloudFormation Stack
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file aws_infrastructure/cloudformation.yaml \
+            --stack-name ${{ env.PROJECT_NAME }}-stack \
+            --parameter-overrides \
+                ProjectName=${{ env.PROJECT_NAME }} \
+                AlertEmail=${{ secrets.ALERT_EMAIL }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-stack \
+            --query 'Stacks[0].Outputs' \
+            --output table
+
+  deploy-lambdas:
+    runs-on: ubuntu-latest
+    name: Package and Deploy Lambda Functions
+    needs: deploy-infrastructure
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package log-processor Lambda
+        run: |
+          cd lambda_functions/log_processor
+          pip install -r requirements.txt -t package/
+          cp lambda_function.py package/
+          cd package && zip -r ../log_processor.zip .
+          cd ../..
+          echo "log-processor packaged"
+
+      - name: Package anomaly-detector Lambda
+        run: |
+          cd lambda_functions/anomaly_detector
+          pip install -r requirements.txt -t package/
+          cp lambda_function.py package/
+          cd package && zip -r ../anomaly_detector.zip .
+          cd ../..
+          echo "anomaly-detector packaged"
+
+      - name: Deploy log-processor Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ env.PROJECT_NAME }}-log-processor \
+            --zip-file fileb://lambda_functions/log_processor/log_processor.zip \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy anomaly-detector Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ env.PROJECT_NAME }}-anomaly-detector \
+            --zip-file fileb://lambda_functions/anomaly_detector/anomaly_detector.zip \
+            --region ${{ env.AWS_REGION }}
+
+  deploy-model:
+    runs-on: ubuntu-latest
+    name: Deploy SageMaker Endpoint
+    needs: deploy-infrastructure
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install boto3 sagemaker pyyaml loguru
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy model to SageMaker
+        run: python src/deploy_model.py
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
