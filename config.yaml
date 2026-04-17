@@ -6,7 +6,7 @@ project:
 data:
   url: "https://raw.githubusercontent.com/logpai/loghub/master/HDFS/HDFS_2k.log"
   raw_path: "data/raw/HDFS_2k.log"
-  processed_path: "../data/processed/"
+  processed_path: "data/processed/"
   sequence_length: 10
   train_split: 0.7
 
