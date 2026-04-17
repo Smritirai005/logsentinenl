@@ -4,7 +4,6 @@ Lambda function to process logs from Kinesis and prepare for anomaly detection
 import json
 import base64
 import boto3
-import numpy as np
 import re
 from datetime import datetime
 

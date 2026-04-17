@@ -14,7 +14,7 @@ sns = boto3.client('sns')
 # Configuration
 ENDPOINT_NAME = 'log-anomaly-endpoint-v10'
 ANOMALY_THRESHOLD = 0.05  # Load from environment
-SNS_TOPIC_ARN = 'arn:aws:sns:us-east-1:ACCOUNT_ID:log-anomaly-alerts'
+SNS_TOPIC_ARN = 'arn:aws:sns:us-east-1:739086995625:log-anomaly-alerts'
 
 
 # lambda_functions/anomaly_detector/lambda_function.py
@@ -33,12 +33,12 @@ def invoke_sagemaker_endpoint(sequence):
 
 
 def calculate_reconstruction_error(sequence, prediction):
-    """Calculate reconstruction error"""
-    sequence = np.array(sequence)
-    prediction = np.array(prediction)
-
-    error = np.mean(np.square(sequence - prediction))
-
+    # Flatten prediction in case it's nested [[...]] 
+    if isinstance(prediction[0], list):
+        prediction = prediction[0]
+    
+    total = sum((s - p) ** 2 for s, p in zip(sequence, prediction))
+    error = total / len(sequence)
     return error
 
 
@@ -141,11 +141,11 @@ def lambda_handler(event, context):
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'is_anomaly': is_anomaly,
-                'reconstruction_error': error,
-                'threshold': ANOMALY_THRESHOLD,
-                'anomaly_score': error / ANOMALY_THRESHOLD,
-                'timestamp': datetime.now().isoformat()
+            'is_anomaly': bool(is_anomaly),
+            'reconstruction_error': float(error),
+            'threshold': ANOMALY_THRESHOLD,
+            'anomaly_score': float(error / ANOMALY_THRESHOLD),
+            'timestamp': datetime.now().isoformat()
             })
         }
 
