@@ -86,6 +86,7 @@ Saves model artifacts to `models/`: `lstm_autoencoder.h5`, `vocab.pkl`, `thresho
 
 ```bash
 jupyter notebook notebooks/01_EDA_and_Training.ipynb
+jupyter notebook notebooks/02_Model_Comparison.ipynb
 ```
 
 ### 6. Deploy AWS infrastructure
