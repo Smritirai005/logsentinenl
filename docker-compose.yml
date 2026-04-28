@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+
+  # ── Anomaly Detector Lambda ──────────────────────
+  anomaly-detector:
+    build:
+      context: ./lambda_functions/anomaly_detector
+      dockerfile: Dockerfile
+    image: log-anomaly-detector:latest
+    ports:
+      - "9000:8080"          # test locally at localhost:9000
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=us-east-1
+
+  # ── Log Processor Lambda ─────────────────────────
+  log-processor:
+    build:
+      context: ./lambda_functions/log_processor
+      dockerfile: Dockerfile
+    image: log-processor:latest
+    ports:
+      - "9001:8080"          # test locally at localhost:9001
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=us-east-1
+
+  # ── Training Pipeline ────────────────────────────
+  training:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    image: log-anomaly-training:latest
+    volumes:
+      - ./data:/app/data          # read/write data locally
+      - ./models:/app/models      # save trained models locally
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=us-east-1

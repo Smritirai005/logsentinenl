@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.github/
+.env
+notebooks/
+data/raw/
+models/*.h5
+models/*.tar.gz
+*.ipynb
+.gitkeep
